@@ -12,6 +12,11 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
 Types and Constants
 */
@@ -1884,4 +1889,9 @@ int kmip_decode_locate_response_payload(KMIP *, LocateResponsePayload *);
 int kmip_decode_unique_identifiers(KMIP* ctx, UniqueIdentifiers* value);
 
 
+#ifdef __cplusplus
+}
+#endif
+
 #endif  /* KMIP_H */
+
