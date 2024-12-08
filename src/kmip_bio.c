@@ -2222,3 +2222,292 @@ int kmip_bio_locate_with_context(KMIP *ctx, BIO *bio, Attribute* attribs, size_t
 
     return(result_status);
 }
+
+int kmip_bio_get_attributes_with_context(KMIP *ctx, BIO *bio,
+                                         char *uuid, int uuid_size,
+                                         const char **attr_names, int n_attr_names,
+                                         Attribute **attrs, int *n_attrs)
+{
+    if(ctx == NULL || bio == NULL || uuid == NULL || uuid_size <= 0 || n_attrs == NULL || n_attrs == NULL)
+    {
+        return(KMIP_ARG_INVALID);
+    }
+
+    /* Set up the initial encoding buffer. */
+    size_t buffer_blocks = 1;
+    size_t buffer_block_size = 1024;
+    size_t buffer_total_size = buffer_blocks * buffer_block_size;
+
+    uint8 *encoding = ctx->calloc_func(
+        ctx->state,
+        buffer_blocks,
+        buffer_block_size);
+    if(encoding == NULL)
+    {
+        return(KMIP_MEMORY_ALLOC_FAILED);
+    }
+    kmip_set_buffer(ctx, encoding, buffer_total_size);
+
+    /* Build the request message. */
+    ProtocolVersion pv = {0};
+    kmip_init_protocol_version(&pv, ctx->version);
+
+    RequestHeader rh = {0};
+    kmip_init_request_header(&rh);
+
+    rh.protocol_version = &pv;
+    rh.maximum_response_size = ctx->max_message_size;
+    rh.time_stamp = time(NULL);
+    rh.batch_count = 1;
+
+    TextString id = {0};
+    id.value = uuid;
+    id.size = uuid_size;
+
+    GetAttributesRequestPayload gap = {0};
+    gap.unique_identifier = &id;
+
+    AttributeNames ans = {0};
+
+    if (n_attr_names > 0) {
+        ans.name_list = ctx->calloc_func(ctx->state, 1, sizeof(LinkedList));
+        if (ans.name_list == NULL)
+        {
+            kmip_free_buffer(ctx, encoding, buffer_total_size);
+            return(KMIP_MEMORY_ALLOC_FAILED);
+        }
+        for (int i = 0; i < n_attr_names; ++i)
+        {
+            LinkedListItem *item = ctx->calloc_func(ctx->state, 1, sizeof(LinkedListItem));
+            if (item == NULL) 
+            {
+                kmip_free_buffer(ctx, encoding, buffer_total_size);
+                kmip_free_attribute_names(ctx, &ans);
+                return(KMIP_MEMORY_ALLOC_FAILED);
+            }
+            TextString ts = {0};
+            ts.size = kmip_strnlen_s(attr_names[0], 80);
+            ts.value = (char*)attr_names[0];
+            item->data = kmip_deep_copy_text_string(ctx, &ts);
+
+            if (item->data == NULL) {
+                ctx->free_func(ctx, item);
+                kmip_free_buffer(ctx, encoding, buffer_total_size);
+                kmip_free_attribute_names(ctx, &ans);
+                return(KMIP_MEMORY_ALLOC_FAILED);
+            }
+            kmip_linked_list_enqueue(ans.name_list, item);
+        }
+        gap.attribute_names = &ans;
+    }
+
+    RequestBatchItem rbi = {0};
+    kmip_init_request_batch_item(&rbi);
+    rbi.operation = KMIP_OP_GET_ATTRIBUTES;
+    rbi.request_payload = &gap;
+
+    RequestMessage rm = {0};
+    rm.request_header = &rh;
+    rm.batch_items = &rbi;
+    rm.batch_count = 1;
+
+    /* Add the context credential to the request message if it exists. */
+    /* TODO (ph) Update this to add multiple credentials. */
+    Authentication auth = {0};
+    if(ctx->credential_list != NULL)
+    {
+        LinkedListItem *item = ctx->credential_list->head;
+        if(item != NULL)
+        {
+            auth.credential = (Credential *)item->data;
+            rh.authentication = &auth;
+        }
+    }
+
+    /* Encode the request message. Dynamically resize the encoding buffer */
+    /* if it's not big enough. Once encoding succeeds, send the request   */
+    /* message.                                                           */
+    int encode_result = kmip_encode_request_message(ctx, &rm);
+    while(encode_result == KMIP_ERROR_BUFFER_FULL)
+    {
+        kmip_reset(ctx);
+        ctx->free_func(ctx->state, encoding);
+
+        buffer_blocks += 1;
+        buffer_total_size = buffer_blocks * buffer_block_size;
+
+        encoding = ctx->calloc_func(
+            ctx->state,
+            buffer_blocks,
+            buffer_block_size);
+        if(encoding == NULL)
+        {
+            kmip_free_attribute_names(ctx, &ans);
+            return(KMIP_MEMORY_ALLOC_FAILED);
+        }
+
+        kmip_set_buffer(
+            ctx,
+            encoding,
+            buffer_total_size);
+        encode_result = kmip_encode_request_message(ctx, &rm);
+    }
+
+    kmip_free_attribute_names(ctx, &ans);
+
+    if(encode_result != KMIP_OK)
+    {
+        kmip_free_buffer(ctx, encoding, buffer_total_size);
+        encoding = NULL;
+        return(encode_result);
+    }
+
+    int sent = BIO_write(bio, ctx->buffer, ctx->index - ctx->buffer);
+    if(sent != ctx->index - ctx->buffer)
+    {
+        kmip_free_buffer(ctx, encoding, buffer_total_size);
+        encoding = NULL;
+        return(KMIP_IO_FAILURE);
+    }
+
+    kmip_free_buffer(ctx, encoding, buffer_total_size);
+    encoding = NULL;
+
+    /* Read the response message. Dynamically resize the encoding buffer  */
+    /* to align with the message size advertised by the message encoding. */
+    /* Reject the message if the message size is too large.               */
+    buffer_blocks = 1;
+    buffer_block_size = 8;
+    buffer_total_size = buffer_blocks * buffer_block_size;
+
+    encoding = ctx->calloc_func(ctx->state, buffer_blocks, buffer_block_size);
+    if(encoding == NULL)
+    {
+        return(KMIP_MEMORY_ALLOC_FAILED);
+    }
+
+    int recv = BIO_read(bio, encoding, buffer_total_size);
+    if((size_t)recv != buffer_total_size)
+    {
+        kmip_free_buffer(ctx, encoding, buffer_total_size);
+        encoding = NULL;
+        return(KMIP_IO_FAILURE);
+    }
+
+    kmip_set_buffer(ctx, encoding, buffer_total_size);
+    ctx->index += 4;
+    int length = 0;
+
+    kmip_decode_int32_be(ctx, &length);
+    kmip_rewind(ctx);
+    if(length > ctx->max_message_size)
+    {
+        kmip_free_buffer(ctx, encoding, buffer_total_size);
+        encoding = NULL;
+        return(KMIP_EXCEED_MAX_MESSAGE_SIZE);
+    }
+
+    kmip_set_buffer(ctx, NULL, 0);
+    uint8 *extended = ctx->realloc_func(
+        ctx->state,
+        encoding,
+        buffer_total_size + length);
+    if(encoding != extended)
+    {
+        encoding = extended;
+    }
+    ctx->memset_func(encoding + buffer_total_size, 0, length);
+
+    buffer_block_size += length;
+    buffer_total_size = buffer_blocks * buffer_block_size;
+
+    recv = BIO_read(bio, encoding + 8, length);
+    if(recv != length)
+    {
+        kmip_free_buffer(ctx, encoding, buffer_total_size);
+        encoding = NULL;
+        return(KMIP_IO_FAILURE);
+    }
+
+    kmip_set_buffer(ctx, encoding, buffer_block_size);
+
+    /* Decode the response message and retrieve the operation result status. */
+    ResponseMessage resp_m = {0};
+    int decode_result = kmip_decode_response_message(ctx, &resp_m);
+    if(decode_result != KMIP_OK)
+    {
+        kmip_free_response_message(ctx, &resp_m);
+        kmip_free_buffer(ctx, encoding, buffer_total_size);
+        encoding = NULL;
+        return(decode_result);
+    }
+    
+    kmip_free_buffer(ctx, encoding, buffer_total_size);
+    encoding = NULL;
+
+    if(resp_m.batch_count != 1 || resp_m.batch_items == NULL)
+    {
+        kmip_free_response_message(ctx, &resp_m);
+        kmip_set_buffer(ctx, NULL, 0);
+        return(KMIP_MALFORMED_RESPONSE);
+    }
+
+    ResponseBatchItem resp_item = resp_m.batch_items[0];
+    enum result_status result = resp_item.result_status;
+
+    kmip_set_last_result(&resp_item);
+
+    if(result != KMIP_STATUS_SUCCESS)
+    {
+        kmip_free_response_message(ctx, &resp_m);
+        kmip_set_buffer(ctx, NULL, 0);
+        return(result);
+    }
+
+    GetAttributesResponsePayload *pld = (GetAttributesResponsePayload *)resp_item.response_payload;
+
+    *attrs = NULL;
+    *n_attrs = 0;
+
+    if (pld->attributes != NULL && pld->attributes->attribute_list != NULL) 
+    { 
+        size_t n = pld->attributes->attribute_list->size;
+        Attribute* result_attrs = ctx->calloc_func(ctx->state, n, sizeof(Attribute));
+        if (result_attrs == NULL)
+        {
+            kmip_free_response_message(ctx, &resp_m);
+            kmip_set_buffer(ctx, NULL, 0);
+            return(KMIP_MEMORY_ALLOC_FAILED);
+        }
+        size_t i = 0;
+        for (LinkedListItem* item = pld->attributes->attribute_list->head; item != NULL && i < n; item = item->next)
+        {
+            Attribute* src = (Attribute*)item->data;
+            Attribute* copy = kmip_deep_copy_attribute(ctx, src);
+
+            if (copy == NULL) {
+                for (size_t j = 0; j < i; ++j) {
+                    kmip_free_attribute(ctx, &result_attrs[j]);
+                }
+                kmip_free_response_message(ctx, &resp_m);
+                kmip_set_buffer(ctx, NULL, 0);
+                return(KMIP_MEMORY_ALLOC_FAILED);
+            }
+            result_attrs[i] = *copy;
+            ctx->free_func(ctx->state, copy);
+            ++i;
+        }
+
+        *attrs = result_attrs;
+        *n_attrs = n;
+    }
+
+    /* Clean up the response message, the encoding buffer, and the KMIP */
+    /* context. */
+    kmip_free_response_message(ctx, &resp_m);
+    kmip_free_buffer(ctx, encoding, buffer_total_size);
+    encoding = NULL;
+    kmip_set_buffer(ctx, NULL, 0);
+
+    return(result);
+}

@@ -872,6 +872,7 @@ kmip_check_enum_value(enum kmip_version version, enum tag t, int value)
             case KMIP_OP_ACTIVATE:
             case KMIP_OP_QUERY:
             case KMIP_OP_LOCATE:
+            case KMIP_OP_GET_ATTRIBUTES:
             return(KMIP_OK);
             break;
             
@@ -2710,6 +2711,10 @@ kmip_free_request_batch_item(KMIP *ctx, RequestBatchItem *value)
                 kmip_free_locate_request_payload(ctx, (LocateRequestPayload *)value->request_payload);
                 break;
 
+                case KMIP_OP_GET_ATTRIBUTES:
+                kmip_free_get_attributes_request_payload(ctx, (GetAttributesRequestPayload *)value->request_payload);
+                break;
+
                 default:
                 /* NOTE (ph) Hitting this case means that we don't know    */
                 /*      what the actual type, size, or value of            */
@@ -2786,6 +2791,11 @@ kmip_free_response_batch_item(KMIP *ctx, ResponseBatchItem *value)
                 case KMIP_OP_LOCATE:
                 kmip_free_locate_response_payload(ctx, (LocateResponsePayload *)value->response_payload);
                 break;
+
+                case KMIP_OP_GET_ATTRIBUTES:
+                kmip_free_get_attributes_response_payload(ctx, (GetAttributesResponsePayload *)value->response_payload);
+                break;
+
 
                 default:
                 /* NOTE (ph) Hitting this case means that we don't know    */
@@ -5287,6 +5297,13 @@ kmip_compare_request_batch_item(const RequestBatchItem *a, const RequestBatchIte
                 }
                 break;
 
+                case KMIP_OP_GET_ATTRIBUTES:
+                if(kmip_compare_get_attributes_request_payload((GetAttributesRequestPayload *)a->request_payload, (GetAttributesRequestPayload *)b->request_payload) == KMIP_FALSE)
+                {
+                    return(KMIP_FALSE);
+                }
+                break;
+
                 default:
                 /* NOTE (ph) Unsupported payloads cannot be compared. */
                 return(KMIP_FALSE);
@@ -5408,6 +5425,13 @@ kmip_compare_response_batch_item(const ResponseBatchItem *a, const ResponseBatch
 
                 case KMIP_OP_LOCATE:
                 if(kmip_compare_locate_response_payload((LocateResponsePayload *)a->response_payload, (LocateResponsePayload *)b->response_payload) == KMIP_FALSE)
+                {
+                    return(KMIP_FALSE);
+                }
+                break;
+
+                case KMIP_OP_GET_ATTRIBUTES:
+                if(kmip_compare_get_attributes_response_payload((GetAttributesResponsePayload *)a->response_payload, (GetAttributesResponsePayload *)b->response_payload) == KMIP_FALSE)
                 {
                     return(KMIP_FALSE);
                 }
@@ -8946,6 +8970,10 @@ kmip_encode_request_batch_item(KMIP *ctx, const RequestBatchItem *value)
         result = kmip_encode_locate_request_payload(ctx, (LocateRequestPayload*)value->request_payload);
         break;
 
+        case KMIP_OP_GET_ATTRIBUTES:
+        result = kmip_encode_get_attributes_request_payload(ctx, (GetAttributesRequestPayload*)value->request_payload);
+        break;
+
         default:
         kmip_push_error_frame(ctx, __func__, __LINE__);
         return(KMIP_NOT_IMPLEMENTED);
@@ -9028,6 +9056,10 @@ kmip_encode_response_batch_item(KMIP *ctx, const ResponseBatchItem *value)
 
         case KMIP_OP_LOCATE:
         result = kmip_encode_locate_response_payload(ctx, (LocateResponsePayload*)value->response_payload);
+        break;
+
+        case KMIP_OP_GET_ATTRIBUTES:
+        result = kmip_encode_get_attributes_response_payload(ctx, (GetAttributesResponsePayload*)value->response_payload);
         break;
 
         default:
@@ -11445,6 +11477,12 @@ kmip_decode_request_batch_item(KMIP *ctx, RequestBatchItem *value)
         result = kmip_decode_locate_request_payload(ctx, (LocateRequestPayload*)value->request_payload);
         break;
 
+        case KMIP_OP_GET_ATTRIBUTES:
+        value->request_payload = ctx->calloc_func(ctx->state, 1, sizeof(GetAttributesRequestPayload));
+        CHECK_NEW_MEMORY(ctx, value->request_payload, sizeof(GetAttributesRequestPayload), "GetAttributesRequestPayload structure");
+        result = kmip_decode_get_attributes_request_payload(ctx, (GetAttributesRequestPayload*)value->request_payload);
+        break;
+
         default:
         kmip_push_error_frame(ctx, __func__, __LINE__);
         return(KMIP_NOT_IMPLEMENTED);
@@ -11554,6 +11592,12 @@ kmip_decode_response_batch_item(KMIP *ctx, ResponseBatchItem *value)
             value->response_payload = ctx->calloc_func(ctx->state, 1, sizeof(LocateResponsePayload));
             CHECK_NEW_MEMORY(ctx, value->response_payload, sizeof(LocateResponsePayload), "LocateResponsePayload structure");
             result = kmip_decode_locate_response_payload(ctx, value->response_payload);
+            break;
+
+            case KMIP_OP_GET_ATTRIBUTES:
+            value->response_payload = ctx->calloc_func(ctx->state, 1, sizeof(GetAttributesResponsePayload));
+            CHECK_NEW_MEMORY(ctx, value->response_payload, sizeof(GetAttributesResponsePayload), "GetAttributesResponsePayload structure");
+            result = kmip_decode_get_attributes_response_payload(ctx, value->response_payload);
             break;
 
             default:
