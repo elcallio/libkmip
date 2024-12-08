@@ -1907,14 +1907,33 @@ int kmip_bio_query_with_context(KMIP *ctx, BIO *bio, enum query_function queries
     rh.batch_count = 1;
 
     LinkedList *funclist = ctx->calloc_func(ctx->state, 1, sizeof(LinkedList));
+    if (funclist == NULL)
+    {
+        kmip_free_buffer(ctx, encoding, buffer_total_size);
+        return(KMIP_MEMORY_ALLOC_FAILED);
+    }
+
+    Functions functions = {0};
+    functions.function_list = funclist;
+
     for(size_t i = 0; i < query_count; i++)
     {
         LinkedListItem *item = ctx->calloc_func(ctx->state, 1, sizeof(LinkedListItem));
-        item->data = &queries[i];
+        if (item == NULL) {
+            kmip_free_query_functions(ctx, &functions);
+            kmip_free_buffer(ctx, encoding, buffer_total_size);
+            return(KMIP_MEMORY_ALLOC_FAILED);
+        }
+        item->data = ctx->calloc_func(ctx->state, 1, sizeof(enum query_function));
+        if (item == NULL) {
+            ctx->free_func(ctx->state, item);
+            kmip_free_query_functions(ctx, &functions);
+            kmip_free_buffer(ctx, encoding, buffer_total_size);
+            return(KMIP_MEMORY_ALLOC_FAILED);
+        }
+        *((enum query_function*)item->data) = queries[i];
         kmip_linked_list_enqueue(funclist, item);
     }
-    Functions functions = {0};
-    functions.function_list = funclist;
 
     QueryRequestPayload qrp = {0};
     qrp.functions = &functions;
@@ -1944,11 +1963,14 @@ int kmip_bio_query_with_context(KMIP *ctx, BIO *bio, enum query_function queries
         encoding = ctx->calloc_func(ctx->state, buffer_blocks, buffer_block_size);
         if(encoding == NULL)
         {
+            kmip_free_query_functions(ctx, &functions);
             return(KMIP_MEMORY_ALLOC_FAILED);
         }
         kmip_set_buffer(ctx, encoding, buffer_total_size);
         encode_result = kmip_encode_request_message(ctx, &rm);
     }
+
+    kmip_free_query_functions(ctx, &functions);
 
     if(encode_result != KMIP_OK)
     {
