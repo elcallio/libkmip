@@ -41,6 +41,7 @@ int kmip_bio_activate_symmetric_key(BIO *, char *, int);
 
 int kmip_bio_create_symmetric_key_with_context(KMIP *, BIO *, TemplateAttribute *, char **, int *);
 int kmip_bio_get_symmetric_key_with_context(KMIP *, BIO *, char *, int, char **, int *);
+int kmip_bio_get_symmetric_key_with_context_ex(KMIP *, BIO *, char *, int, char **, int *, enum cryptographic_algorithm*);
 int kmip_bio_destroy_symmetric_key_with_context(KMIP *, BIO *, char *, int);
 int kmip_bio_activate_symmetric_key_with_context(KMIP *, BIO *, char *, int);
 

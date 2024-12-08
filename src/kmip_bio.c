@@ -1146,6 +1146,14 @@ int kmip_bio_get_symmetric_key_with_context(KMIP *ctx, BIO *bio,
                                             char *uuid, int uuid_size,
                                             char **key, int *key_size)
 {
+    return kmip_bio_get_symmetric_key_with_context_ex(ctx, bio, uuid, uuid_size, key, key_size, NULL);
+}
+
+int kmip_bio_get_symmetric_key_with_context_ex(KMIP *ctx, BIO *bio,
+                                               char *uuid, int uuid_size,
+                                               char **key, int *key_size,
+                                               enum cryptographic_algorithm *pca)
+{
     if(ctx == NULL || bio == NULL || uuid == NULL || uuid_size <= 0 || key == NULL || key_size == NULL)
     {
         return(KMIP_ARG_INVALID);
@@ -1375,6 +1383,10 @@ int kmip_bio_get_symmetric_key_with_context(KMIP *ctx, BIO *bio,
     }
     *key = result_key;
     
+    if (pca) {
+        *pca = symmetric_key->key_block->cryptographic_algorithm;
+    }
+
     /* Clean up the response message, the encoding buffer, and the KMIP */
     /* context. */
     kmip_free_response_message(ctx, &resp_m);
